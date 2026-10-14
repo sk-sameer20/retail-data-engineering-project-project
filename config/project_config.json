@@ -1,0 +1,36 @@
+{
+  "project_name": "Retail Sales Data Engineering Platform",
+  "project_type": "End-to-End AWS Data Engineering",
+  "environment": "development",
+  "aws_region": "us-east-1",
+
+  "services": {
+    "storage": "Amazon S3",
+    "ingestion": "AWS Lambda",
+    "orchestration": "AWS Step Functions",
+    "etl": "AWS Glue PySpark",
+    "catalog": "AWS Glue Data Catalog",
+    "query_engine": "Amazon Athena",
+    "warehouse": "Amazon Redshift Serverless",
+    "bi": "Amazon QuickSight",
+    "notifications": "Amazon SNS"
+  },
+
+  "s3_bucket": "sameer-retail-sales-pipeline",
+
+  "lambda_function": "retail-s3-ingestion-trigger",
+
+  "step_function": "retail-daily-sales-pipeline",
+
+  "glue_job": "retail-sales-pyspark-etl",
+
+  "raw_database": "retail_raw_db",
+
+  "curated_database": "retail_curated_db",
+
+  "redshift_namespace": "retail-analytics-ns",
+
+  "redshift_workgroup": "retail-analytics-wg",
+
+  "redshift_schema": "retail_dw"
+}

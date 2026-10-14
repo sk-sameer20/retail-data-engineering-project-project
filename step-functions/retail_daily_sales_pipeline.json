@@ -1,0 +1,207 @@
+{
+  "Comment": "Retail daily ERP sales processing pipeline",
+  "StartAt": "ValidateERPFile",
+  "States": {
+    "ValidateERPFile": {
+      "Type": "Pass",
+      "Parameters": {
+        "bucket.$": "$.bucket",
+        "key.$": "$.key",
+        "file_name.$": "$.file_name"
+      },
+      "Next": "RunGlueETL"
+    },
+    "RunGlueETL": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "retail-sales-pyspark-etl",
+        "Arguments": {
+          "--SOURCE_BUCKET.$": "$.bucket",
+          "--SOURCE_KEY.$": "$.key",
+          "--PRODUCTS_KEY": "raw/products/",
+          "--STORES_KEY": "raw/stores/",
+          "--CURATED_PATH": "s3://sameer-retail-sales-pipeline/curated/sales/",
+          "--REJECTED_PATH": "s3://sameer-retail-sales-pipeline/rejected/sales/"
+        }
+      },
+      "ResultPath": "$.glueResult",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "PipelineFailure"
+        }
+      ],
+      "Next": "CheckCuratedCrawler"
+    },
+    "CheckCuratedCrawler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "Parameters": {
+        "Name": "retail-curated-sales-crawler"
+      },
+      "ResultPath": "$.crawlerStatus",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "PipelineFailure"
+        }
+      ],
+      "Next": "CrawlerReadyChoice"
+    },
+    "CrawlerReadyChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.crawlerStatus.Crawler.State",
+          "StringEquals": "READY",
+          "Next": "StartCuratedCrawler"
+        },
+        {
+          "Variable": "$.crawlerStatus.Crawler.State",
+          "StringEquals": "RUNNING",
+          "Next": "WaitForCrawler"
+        },
+        {
+          "Variable": "$.crawlerStatus.Crawler.State",
+          "StringEquals": "STOPPING",
+          "Next": "WaitForCrawler"
+        }
+      ],
+      "Default": "WaitForCrawler"
+    },
+    "StartCuratedCrawler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Parameters": {
+        "Name": "retail-curated-sales-crawler"
+      },
+      "ResultPath": null,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "PipelineFailure"
+        }
+      ],
+      "Next": "WaitForCrawler"
+    },
+    "WaitForCrawler": {
+      "Type": "Wait",
+      "Seconds": 20,
+      "Next": "CheckCrawlerAfterWait"
+    },
+    "CheckCrawlerAfterWait": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "Parameters": {
+        "Name": "retail-curated-sales-crawler"
+      },
+      "ResultPath": "$.crawlerStatus",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "PipelineFailure"
+        }
+      ],
+      "Next": "CrawlerFinishedChoice"
+    },
+    "CrawlerFinishedChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.crawlerStatus.Crawler.State",
+              "StringEquals": "READY"
+            },
+            {
+              "Variable": "$.crawlerStatus.Crawler.LastCrawl.Status",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.crawlerStatus.Crawler.LastCrawl.Status",
+              "StringEquals": "SUCCEEDED"
+            }
+          ],
+          "Next": "PipelineSuccess"
+        },
+        {
+          "Variable": "$.crawlerStatus.Crawler.State",
+          "StringEquals": "RUNNING",
+          "Next": "WaitForCrawler"
+        },
+        {
+          "Variable": "$.crawlerStatus.Crawler.State",
+          "StringEquals": "STOPPING",
+          "Next": "WaitForCrawler"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.crawlerStatus.Crawler.State",
+              "StringEquals": "READY"
+            },
+            {
+              "Variable": "$.crawlerStatus.Crawler.LastCrawl.Status",
+              "StringEquals": "FAILED"
+            }
+          ],
+          "Next": "PipelineFailure"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.crawlerStatus.Crawler.State",
+              "StringEquals": "READY"
+            },
+            {
+              "Variable": "$.crawlerStatus.Crawler.LastCrawl.Status",
+              "StringEquals": "CANCELLED"
+            }
+          ],
+          "Next": "PipelineFailure"
+        }
+      ],
+      "Default": "WaitForCrawler"
+    },
+    "PipelineFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn":  "YOUR_SNS_TOPIC_ARN",
+        "Subject": "Retail Pipeline Failed",
+        "Message.$": "States.Format('Retail pipeline failed. File: {}. Bucket: {}', $.file_name, $.bucket)"
+      },
+      "ResultPath": null,
+      "Next": "PipelineFailed"
+    },
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Error": "RetailPipelineFailed",
+      "Cause": "Retail ETL or curated crawler failed. SNS notification sent."
+    },
+    "PipelineSuccess": {
+      "Type": "Pass",
+      "Parameters": {
+        "status": "SUCCESS",
+        "message": "ERP sales file processed and curated catalog updated successfully",
+        "bucket.$": "$.bucket",
+        "key.$": "$.key",
+        "file_name.$": "$.file_name"
+      },
+      "End": true
+    }
+  }
+}
